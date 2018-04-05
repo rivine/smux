@@ -4,16 +4,16 @@
 
 <img src="mux.jpg" alt="smux" height="120px" /> 
 
-[1]: https://godoc.org/github.com/xtaci/smux?status.svg
-[2]: https://godoc.org/github.com/xtaci/smux
+[1]: https://godoc.org/github.com/rivine/smux?status.svg
+[2]: https://godoc.org/github.com/rivine/smux
 [3]: https://img.shields.io/badge/license-MIT-blue.svg
 [4]: LICENSE
-[5]: https://travis-ci.org/xtaci/smux.svg?branch=master
-[6]: https://travis-ci.org/xtaci/smux
-[7]: https://goreportcard.com/badge/github.com/xtaci/smux
-[8]: https://goreportcard.com/report/github.com/xtaci/smux
-[9]: https://codecov.io/gh/xtaci/smux/branch/master/graph/badge.svg
-[10]: https://codecov.io/gh/xtaci/smux
+[5]: https://travis-ci.org/rivine/smux.svg?branch=master
+[6]: https://travis-ci.org/rivine/smux
+[7]: https://goreportcard.com/badge/github.com/rivine/smux
+[8]: https://goreportcard.com/report/github.com/rivine/smux
+[9]: https://codecov.io/gh/rivine/smux/branch/master/graph/badge.svg
+[10]: https://codecov.io/gh/rivine/smux
 
 ## Introduction
 
@@ -31,7 +31,7 @@ Smux ( **S**imple **MU**ltiple**X**ing) is a multiplexing library for Golang. It
 
 ## Documentation
 
-For complete documentation, see the associated [Godoc](https://godoc.org/github.com/xtaci/smux).
+For complete documentation, see the associated [Godoc](https://godoc.org/github.com/rivine/smux).
 
 ## Specification
 
