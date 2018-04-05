@@ -5,37 +5,36 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net"
+	"net/http"
+	_ "net/http/pprof"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
 
-// setupServer starts new server listening on a random localhost port and
-// returns address of the server, function to stop the server, new client
-// connection to this server or an error.
-func setupServer(tb testing.TB) (addr string, stopfunc func(), client net.Conn, err error) {
-	ln, err := net.Listen("tcp", "localhost:0")
+func init() {
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	ln, err := net.Listen("tcp", "127.0.0.1:19999")
 	if err != nil {
-		return "", nil, nil, err
+		// handle error
+		panic(err)
 	}
 	go func() {
-		conn, err := ln.Accept()
-		if err != nil {
-			tb.Error(err)
-			return
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				// handle error
+			}
+			go handleConnection(conn)
 		}
-		go handleConnection(conn)
 	}()
-	addr = ln.Addr().String()
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		ln.Close()
-		return "", nil, nil, err
-	}
-	return ln.Addr().String(), func() { ln.Close() }, conn, nil
 }
 
 func handleConnection(conn net.Conn) {
@@ -59,11 +58,10 @@ func handleConnection(conn net.Conn) {
 }
 
 func TestEcho(t *testing.T) {
-	_, stop, cli, err := setupServer(t)
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
 	session, _ := Client(cli, nil)
 	stream, _ := session.OpenStream()
 	const N = 100
@@ -87,11 +85,10 @@ func TestEcho(t *testing.T) {
 }
 
 func TestSpeed(t *testing.T) {
-	_, stop, cli, err := setupServer(t)
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
 	session, _ := Client(cli, nil)
 	stream, _ := session.OpenStream()
 	t.Log(stream.LocalAddr(), stream.RemoteAddr())
@@ -105,7 +102,7 @@ func TestSpeed(t *testing.T) {
 		for {
 			n, err := stream.Read(buf)
 			if err != nil {
-				t.Error(err)
+				t.Fatal(err)
 				break
 			} else {
 				nrecv += n
@@ -127,11 +124,10 @@ func TestSpeed(t *testing.T) {
 }
 
 func TestParallel(t *testing.T) {
-	_, stop, cli, err := setupServer(t)
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
 	session, _ := Client(cli, nil)
 
 	par := 1000
@@ -159,11 +155,10 @@ func TestParallel(t *testing.T) {
 }
 
 func TestCloseThenOpen(t *testing.T) {
-	_, stop, cli, err := setupServer(t)
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
 	session, _ := Client(cli, nil)
 	session.Close()
 	if _, err := session.OpenStream(); err == nil {
@@ -172,11 +167,10 @@ func TestCloseThenOpen(t *testing.T) {
 }
 
 func TestStreamDoubleClose(t *testing.T) {
-	_, stop, cli, err := setupServer(t)
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
 	session, _ := Client(cli, nil)
 	stream, _ := session.OpenStream()
 	stream.Close()
@@ -187,11 +181,10 @@ func TestStreamDoubleClose(t *testing.T) {
 }
 
 func TestConcurrentClose(t *testing.T) {
-	_, stop, cli, err := setupServer(t)
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
 	session, _ := Client(cli, nil)
 	numStreams := 100
 	streams := make([]*Stream, 0, numStreams)
@@ -213,11 +206,10 @@ func TestConcurrentClose(t *testing.T) {
 }
 
 func TestTinyReadBuffer(t *testing.T) {
-	_, stop, cli, err := setupServer(t)
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
 	session, _ := Client(cli, nil)
 	stream, _ := session.OpenStream()
 	const N = 100
@@ -249,91 +241,76 @@ func TestTinyReadBuffer(t *testing.T) {
 }
 
 func TestIsClose(t *testing.T) {
-	_, stop, cli, err := setupServer(t)
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
 	session, _ := Client(cli, nil)
 	session.Close()
-	if !session.IsClosed() {
+	if session.IsClosed() != true {
 		t.Fatal("still open after close")
 	}
 }
 
 func TestKeepAliveTimeout(t *testing.T) {
-	ln, err := net.Listen("tcp", "localhost:0")
+	ln, err := net.Listen("tcp", "127.0.0.1:29999")
 	if err != nil {
-		t.Fatal(err)
+		// handle error
+		panic(err)
 	}
-	defer ln.Close()
 	go func() {
 		ln.Accept()
 	}()
 
-	cli, err := net.Dial("tcp", ln.Addr().String())
+	cli, err := net.Dial("tcp", "127.0.0.1:29999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cli.Close()
 
 	config := DefaultConfig()
 	config.KeepAliveInterval = time.Second
 	config.KeepAliveTimeout = 2 * time.Second
 	session, _ := Client(cli, config)
-	time.Sleep(3 * time.Second)
-	if !session.IsClosed() {
+	<-time.After(3 * time.Second)
+	if session.IsClosed() != true {
 		t.Fatal("keepalive-timeout failed")
 	}
 }
 
 func TestServerEcho(t *testing.T) {
-	ln, err := net.Listen("tcp", "localhost:0")
+	ln, err := net.Listen("tcp", "127.0.0.1:39999")
 	if err != nil {
-		t.Fatal(err)
+		// handle error
+		panic(err)
 	}
-	defer ln.Close()
 	go func() {
-		err := func() error {
-			conn, err := ln.Accept()
-			if err != nil {
-				return err
-			}
-			defer conn.Close()
-			session, err := Server(conn, nil)
-			if err != nil {
-				return err
-			}
-			defer session.Close()
-			buf := make([]byte, 10)
-			stream, err := session.OpenStream()
-			if err != nil {
-				return err
-			}
-			defer stream.Close()
-			for i := 0; i < 100; i++ {
-				msg := fmt.Sprintf("hello%v", i)
-				stream.Write([]byte(msg))
-				n, err := stream.Read(buf)
-				if err != nil {
-					return err
+		if conn, err := ln.Accept(); err == nil {
+			session, _ := Server(conn, nil)
+			if stream, err := session.OpenStream(); err == nil {
+				const N = 100
+				buf := make([]byte, 10)
+				for i := 0; i < N; i++ {
+					msg := fmt.Sprintf("hello%v", i)
+					stream.Write([]byte(msg))
+					if n, err := stream.Read(buf); err != nil {
+						t.Fatal(err)
+					} else if string(buf[:n]) != msg {
+						t.Fatal(err)
+					}
 				}
-				if got := string(buf[:n]); got != msg {
-					return fmt.Errorf("got: %q, want: %q", got, msg)
-				}
+				stream.Close()
+			} else {
+				t.Fatal(err)
 			}
-			return nil
-		}()
-		if err != nil {
-			t.Error(err)
+		} else {
+			t.Fatal(err)
 		}
 	}()
 
-	cli, err := net.Dial("tcp", ln.Addr().String())
+	cli, err := net.Dial("tcp", "127.0.0.1:39999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cli.Close()
 	if session, err := Client(cli, nil); err == nil {
 		if stream, err := session.AcceptStream(); err == nil {
 			buf := make([]byte, 65536)
@@ -353,11 +330,10 @@ func TestServerEcho(t *testing.T) {
 }
 
 func TestSendWithoutRecv(t *testing.T) {
-	_, stop, cli, err := setupServer(t)
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
 	session, _ := Client(cli, nil)
 	stream, _ := session.OpenStream()
 	const N = 100
@@ -373,11 +349,10 @@ func TestSendWithoutRecv(t *testing.T) {
 }
 
 func TestWriteAfterClose(t *testing.T) {
-	_, stop, cli, err := setupServer(t)
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
 	session, _ := Client(cli, nil)
 	stream, _ := session.OpenStream()
 	stream.Close()
@@ -387,11 +362,10 @@ func TestWriteAfterClose(t *testing.T) {
 }
 
 func TestReadStreamAfterSessionClose(t *testing.T) {
-	_, stop, cli, err := setupServer(t)
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
 	session, _ := Client(cli, nil)
 	stream, _ := session.OpenStream()
 	session.Close()
@@ -404,11 +378,10 @@ func TestReadStreamAfterSessionClose(t *testing.T) {
 }
 
 func TestWriteStreamAfterConnectionClose(t *testing.T) {
-	_, stop, cli, err := setupServer(t)
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
 	session, _ := Client(cli, nil)
 	stream, _ := session.OpenStream()
 	session.conn.Close()
@@ -418,11 +391,10 @@ func TestWriteStreamAfterConnectionClose(t *testing.T) {
 }
 
 func TestNumStreamAfterClose(t *testing.T) {
-	_, stop, cli, err := setupServer(t)
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
 	session, _ := Client(cli, nil)
 	if _, err := session.OpenStream(); err == nil {
 		if session.NumStreams() != 1 {
@@ -439,12 +411,11 @@ func TestNumStreamAfterClose(t *testing.T) {
 }
 
 func TestRandomFrame(t *testing.T) {
-	addr, stop, cli, err := setupServer(t)
+	// pure random
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
-	// pure random
 	session, _ := Client(cli, nil)
 	for i := 0; i < 100; i++ {
 		rnd := make([]byte, rand.Uint32()%1024)
@@ -454,19 +425,19 @@ func TestRandomFrame(t *testing.T) {
 	cli.Close()
 
 	// double syn
-	cli, err = net.Dial("tcp", addr)
+	cli, err = net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
 	session, _ = Client(cli, nil)
 	for i := 0; i < 100; i++ {
 		f := newFrame(cmdSYN, 1000)
-		session.writeFrame(f)
+		session.writeFrame(f, time.Time{})
 	}
 	cli.Close()
 
 	// random cmds
-	cli, err = net.Dial("tcp", addr)
+	cli, err = net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,24 +445,24 @@ func TestRandomFrame(t *testing.T) {
 	session, _ = Client(cli, nil)
 	for i := 0; i < 100; i++ {
 		f := newFrame(allcmds[rand.Int()%len(allcmds)], rand.Uint32())
-		session.writeFrame(f)
+		session.writeFrame(f, time.Time{})
 	}
 	cli.Close()
 
 	// random cmds & sids
-	cli, err = net.Dial("tcp", addr)
+	cli, err = net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
 	session, _ = Client(cli, nil)
 	for i := 0; i < 100; i++ {
 		f := newFrame(byte(rand.Uint32()), rand.Uint32())
-		session.writeFrame(f)
+		session.writeFrame(f, time.Time{})
 	}
 	cli.Close()
 
 	// random version
-	cli, err = net.Dial("tcp", addr)
+	cli, err = net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -499,12 +470,12 @@ func TestRandomFrame(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		f := newFrame(byte(rand.Uint32()), rand.Uint32())
 		f.ver = byte(rand.Uint32())
-		session.writeFrame(f)
+		session.writeFrame(f, time.Time{})
 	}
 	cli.Close()
 
 	// incorrect size
-	cli, err = net.Dial("tcp", addr)
+	cli, err = net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,11 +499,10 @@ func TestRandomFrame(t *testing.T) {
 }
 
 func TestReadDeadline(t *testing.T) {
-	_, stop, cli, err := setupServer(t)
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
 	session, _ := Client(cli, nil)
 	stream, _ := session.OpenStream()
 	const N = 100
@@ -557,11 +527,10 @@ func TestReadDeadline(t *testing.T) {
 }
 
 func TestWriteDeadline(t *testing.T) {
-	_, stop, cli, err := setupServer(t)
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop()
 	session, _ := Client(cli, nil)
 	stream, _ := session.OpenStream()
 	buf := make([]byte, 10)
@@ -578,12 +547,259 @@ func TestWriteDeadline(t *testing.T) {
 	session.Close()
 }
 
+func TestKeepAlive(t *testing.T) {
+	if testing.Short() {
+		t.SkipNow()
+	}
+	config := DefaultConfig()
+	config.KeepAliveInterval = 1 * time.Second
+	config.KeepAliveTimeout = 3 * time.Second
+
+	srvListener, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srvListener.Close()
+	go func() {
+		conn, err := srvListener.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv, err := Server(conn, config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer srv.Close()
+		for i := 0; i < 2; i++ {
+			stream, err := srv.AcceptStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stream.Close()
+			// echo until Read fails
+			for {
+				buf := make([]byte, 65536)
+				n, err := stream.Read(buf)
+				if err != nil {
+					break
+				}
+				stream.Write(buf[:n])
+			}
+		}
+	}()
+
+	cliConn, err := net.Dial("tcp", srvListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli, err := Client(cliConn, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cli.Close()
+
+	time.Sleep(10 * time.Second)
+
+	cliStream, err := cli.OpenStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cliStream.Close()
+
+	// perform an echo exchange
+	const echoString = "hello world"
+	_, err = cliStream.Write([]byte(echoString))
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, len(echoString))
+	_, err = io.ReadFull(cliStream, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(buf) != echoString {
+		t.Fatal("bad echo:", string(buf))
+	}
+
+	// wait for a few keepalive pings
+	time.Sleep(10 * time.Second)
+
+	// perform another echo exchange. The stream should still be open.
+	_, err = cliStream.Write([]byte(echoString))
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf = make([]byte, len(echoString))
+	_, err = io.ReadFull(cliStream, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(buf) != echoString {
+		t.Fatal("bad echo:", string(buf))
+	}
+
+	// close the stream, wait for a few keepalive pings, then open a new
+	// stream
+	err = cliStream.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Second)
+
+	cliStream, err = cli.OpenStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cliStream.Close()
+
+	// perform an echo exchange
+	_, err = cliStream.Write([]byte(echoString))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = io.ReadFull(cliStream, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(buf) != echoString {
+		t.Fatal("bad echo:", string(buf))
+	}
+	cliStream.Close()
+}
+
+type slowWriterConn struct {
+	net.Conn
+	writeTime time.Duration
+}
+
+func (c slowWriterConn) Write(p []byte) (int, error) {
+	time.Sleep(c.writeTime)
+	return c.Conn.Write(p)
+}
+
+func TestKeepAliveSlowServer(t *testing.T) {
+	if testing.Short() {
+		t.SkipNow()
+	}
+	config := DefaultConfig()
+	config.KeepAliveInterval = 1 * time.Second
+	config.KeepAliveTimeout = 3 * time.Second
+
+	srvListener, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srvListener.Close()
+	go func() {
+		conn, err := srvListener.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+		slowConn := slowWriterConn{
+			Conn:      conn,
+			writeTime: 5 * time.Second,
+		}
+		srv, err := Server(slowConn, config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer srv.Close()
+		for {
+			_, err := srv.AcceptStream()
+			if err != nil {
+				break
+			}
+		}
+	}()
+
+	cliConn, err := net.Dial("tcp", srvListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli, err := Client(cliConn, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cli.Close()
+
+	// open a stream
+	_, err = cli.OpenStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// wait for keepalive to fail
+	time.Sleep(5 * time.Second)
+
+	// try to open a stream
+	_, err = cli.OpenStream()
+	if err != errBrokenPipe {
+		t.Fatal("OpenStream should have failed with errBrokenPipe; got", err)
+	}
+}
+
+func TestStreamDeadlineSlowServer(t *testing.T) {
+	if testing.Short() {
+		t.SkipNow()
+	}
+	config := DefaultConfig()
+	config.KeepAliveInterval = 1 * time.Second
+	config.KeepAliveTimeout = 3 * time.Second
+
+	srvListener, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srvListener.Close()
+	go func() {
+		conn, err := srvListener.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv, err := Server(conn, config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer srv.Close()
+		for {
+			// accept stream, but perform no further I/O
+			_, err := srv.AcceptStream()
+			if err != nil {
+				break
+			}
+		}
+	}()
+
+	cliConn, err := net.Dial("tcp", srvListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli, err := Client(cliConn, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cli.Close()
+
+	// open a stream
+	stream, err := cli.OpenStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	// set deadline and attempt a read
+	stream.SetReadDeadline(time.Now().Add(time.Second))
+	_, err = stream.Read(make([]byte, 10))
+	if err != errTimeout {
+		t.Fatal("excepted errTimeout, got", err)
+	}
+}
+
 func BenchmarkAcceptClose(b *testing.B) {
-	_, stop, cli, err := setupServer(b)
+	cli, err := net.Dial("tcp", "127.0.0.1:19999")
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer stop()
 	session, _ := Client(cli, nil)
 	for i := 0; i < b.N; i++ {
 		if stream, err := session.OpenStream(); err == nil {
@@ -648,11 +864,10 @@ func getSmuxStreamPair() (*Stream, *Stream, error) {
 }
 
 func getTCPConnectionPair() (net.Conn, net.Conn, error) {
-	lst, err := net.Listen("tcp", "localhost:0")
+	lst, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, nil, err
 	}
-	defer lst.Close()
 
 	var conn0 net.Conn
 	var err0 error

@@ -7,8 +7,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/pkg/errors"
 )
 
 // Stream implements net.Conn
@@ -44,18 +42,9 @@ func (s *Stream) ID() uint32 {
 
 // Read implements net.Conn
 func (s *Stream) Read(b []byte) (n int, err error) {
-	if len(b) == 0 {
-		select {
-		case <-s.die:
-			return 0, errors.New(errBrokenPipe)
-		default:
-			return 0, nil
-		}
-	}
-
 	var deadline <-chan time.Time
 	if d, ok := s.readDeadline.Load().(time.Time); ok && !d.IsZero() {
-		timer := time.NewTimer(time.Until(d))
+		timer := time.NewTimer(d.Sub(time.Now()))
 		defer timer.Stop()
 		deadline = timer.C
 	}
@@ -79,51 +68,33 @@ READ:
 	case <-deadline:
 		return n, errTimeout
 	case <-s.die:
-		return 0, errors.New(errBrokenPipe)
+		return 0, errBrokenPipe
 	}
 }
 
 // Write implements net.Conn
-func (s *Stream) Write(b []byte) (n int, err error) {
-	var deadline <-chan time.Time
+func (s *Stream) Write(b []byte) (int, error) {
+	// Load the deadline, leaving it a default empty time if the load is
+	// unsuccessful.
+	var deadline time.Time
 	if d, ok := s.writeDeadline.Load().(time.Time); ok && !d.IsZero() {
-		timer := time.NewTimer(time.Until(d))
-		defer timer.Stop()
-		deadline = timer.C
+		deadline = d
 	}
 
 	select {
 	case <-s.die:
-		return 0, errors.New(errBrokenPipe)
+		return 0, errBrokenPipe
 	default:
 	}
 
+	// Send the data as a series of frames.
 	frames := s.split(b, cmdPSH, s.id)
-	sent := 0
+	sent := 0 // total bytes sent
 	for k := range frames {
-		req := writeRequest{
-			frame:  frames[k],
-			result: make(chan writeResult, 1),
-		}
-
-		select {
-		case s.sess.writes <- req:
-		case <-s.die:
-			return sent, errors.New(errBrokenPipe)
-		case <-deadline:
-			return sent, errTimeout
-		}
-
-		select {
-		case result := <-req.result:
-			sent += result.n
-			if result.err != nil {
-				return sent, result.err
-			}
-		case <-s.die:
-			return sent, errors.New(errBrokenPipe)
-		case <-deadline:
-			return sent, errTimeout
+		n, err := s.sess.writeFrame(frames[k], deadline)
+		sent += n
+		if err != nil {
+			return sent, err
 		}
 	}
 	return sent, nil
@@ -136,12 +107,12 @@ func (s *Stream) Close() error {
 	select {
 	case <-s.die:
 		s.dieLock.Unlock()
-		return errors.New(errBrokenPipe)
+		return errBrokenPipe
 	default:
 		close(s.die)
 		s.dieLock.Unlock()
 		s.sess.streamClosed(s.id)
-		_, err := s.sess.writeFrame(newFrame(cmdFIN, s.id))
+		_, err := s.sess.writeFrame(newFrame(cmdFIN, s.id), time.Now().Add(s.sess.config.WriteTimeout))
 		return err
 	}
 }
